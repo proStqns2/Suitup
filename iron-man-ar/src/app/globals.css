@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+:root {
+  --background: #020617;
+  --foreground: #e5f2ff;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #000;
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  overflow: hidden;
+}
+
+@keyframes scanline {
+  0% {
+    transform: translateY(-120%);
+  }
+  100% {
+    transform: translateY(260%);
+  }
+}
+
+@keyframes armorIn {
+  0% {
+    opacity: 0;
+    clip-path: inset(100% 0 0 0);
+    transform: scale(0.96) translateY(2%);
+    filter: brightness(1.8) saturate(1.4) blur(1px);
+  }
+  55% {
+    opacity: 1;
+    filter: brightness(1.35) saturate(1.2) blur(0);
+  }
+  100% {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+    transform: scale(1) translateY(0);
+    filter: brightness(1) saturate(1);
+  }
+}
+
+@keyframes pulseGlow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(34, 211, 238, 0);
+  }
+  50% {
+    box-shadow: 0 0 28px rgba(34, 211, 238, 0.2);
+  }
+}
+
+.animate-scan {
+  animation: scanline 2.2s linear infinite;
+  will-change: transform;
+}
+
+.animate-armor-in {
+  animation: armorIn 0.7s ease-out;
+  will-change: clip-path, transform, opacity, filter;
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 2.4s ease-in-out infinite;
+}
+
+/* Calques d'armure : fondu entre les étapes, transform piloté par le suivi. */
+.armor-layer {
+  transition: opacity 420ms ease;
+  will-change: transform, width, height, opacity;
+}
+
+/* Vidéo de formation : only the bright parts are kept over the armor. */
+.scan-effect {
+  opacity: 0.32;
+  mix-blend-mode: screen;
+  will-change: opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-scan,
+  .animate-armor-in {
+    animation: none;
+  }
+}
