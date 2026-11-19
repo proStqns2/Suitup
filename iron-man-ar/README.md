@@ -18,9 +18,15 @@ demande un contexte sécurisé : `localhost` ou HTTPS. Autoriser l'accès webcam
 le navigateur.
 
 ```bash
-npm run build   # build de production
-npm run lint    # ESLint
+npm run dev:clean   # redémarrage propre de l'aperçu (efface .next, écoute 0.0.0.0:3000)
+npm run build       # build de production (écrit dans .next-prod, sans casser le dev)
+npm run lint        # ESLint
 ```
+
+> **Aperçu cassé / page grise** : `next build` et `next dev` n'utilisent plus le
+> même dossier (`distDir` = `.next-prod` pour build/start, `.next` pour dev).
+> En cas de doute, arrêter le serveur puis `npm run dev:clean`. Ne jamais lancer
+> `npm run build` avec un ancien serveur de dev lancé à la main sur `.next`.
 
 > **Pas de caméra ?** Cliquer sur « Démo sans caméra » (ou `D`) : la séquence
 > complète joue sur un mannequin virtuel avec les mêmes calques, vidéos et modèle 3D.
