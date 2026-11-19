@@ -1,71 +1,186 @@
-# Iron Man Suit-Up AR (Webcam)
+# MARK 86 · Suit-Up AR
 
-Expérience Next.js qui utilise la webcam pour afficher une séquence d'équipement de l'armure Iron Man sur la personne devant la caméra, en s'appuyant sur les images/vidéos fournies dans `public/armor/`.
-
-## Fonctionnalités
-
-- **Ouverture webcam** (caméra frontale, vue miroir) via `getUserMedia`
-- **Séquence d'équipement progressive** avec les assets fournis :
-  - `mark86_chest_half.png` → torse
-  - `mark86_frame_repulsor.png` → répulseurs
-  - `mark86_frame_helmet.png` → casque
-  - `armure_terminee.png` → armure complète
-- **Effet visuel vidéo** pendant l'équipement : `HDRjxWl.mp4` (blend)
-- **Détourage des assets** : les photos opaques sont prétraitées en découpes transparentes (`public/armor/cutouts/*.webp`) avec leurs repères anatomiques calibrés, afin que l'armure puisse réellement se coller au corps.
-- **Suivi corporel** : MediaPipe suit le corps dans le navigateur ; le service OpenPose local peut fournir une seconde estimation. Les repères concordants sont fusionnés et les repères divergents sont départagés par leur confiance.
-- **Alignement** : similarité 2D épaules/hanches + interpolation à 60 fps, avec prise en compte du cadrage `object-cover` de la webcam.
-- **Mode dégradé** : si OpenPose est absent, MediaPipe continue seul ; si aucun modèle n'est disponible, le mode rapide reste possible.
-- **UI HUD** : statut, progression, étapes, boutons (ouvrir caméra / équiper / réinitialiser / couper)
+Site web (Next.js / React / TypeScript / three.js) qui transforme la webcam du PC
+en miroir d'essayage Iron Man : dès que la caméra s'ouvre, le suivi corporel
+verrouille les épaules/hanches et l'armure **s'assemble à l'écran sur la personne**,
+en combinant les images, les vidéos et le modèle Blender fournis.
 
 ## Lancer le projet
 
 ```bash
 cd iron-man-ar
 npm install
-npm run dev
+npm run dev -- -H 0.0.0.0 -p 3000
 ```
 
-Puis ouvrir [http://localhost:3000](http://localhost:3000).
+Ouvrir `http://localhost:3000` (ou l'URL HTTPS de prévisualisation). La caméra
+demande un contexte sécurisé : `localhost` ou HTTPS. Autoriser l'accès webcam dans
+le navigateur.
 
-> La caméra nécessite un contexte sécurisé : `http://localhost` fonctionne, ou un site en HTTPS. Autorise l'accès caméra dans le navigateur.
-
-## Activer le suivi OpenPose local (facultatif)
-
-Le navigateur conserve MediaPipe comme suivi temps réel principal. Quand le service local répond, une image réduite de la webcam lui est envoyée environ trois fois par seconde ; ses repères BODY_25 sont fusionnés avec ceux de MediaPipe. Les images restent sur la machine et le service écoute uniquement sur `127.0.0.1`.
-
-Le pont requiert **OpenPose compilé avec son API Python (`BUILD_PYTHON`)** et les modèles BODY_25. La version de Python qui lance le pont doit correspondre à celle ayant servi à construire les bindings. Consulte la [documentation officielle OpenPose pour Windows](https://github.com/CMU-Perceptual-Computing-Lab/openpose/blob/master/doc/installation/0_index.md) ; l'installation portable seule ne fournit pas nécessairement `pyopenpose`.
-
-Dans une deuxième fenêtre PowerShell, après avoir installé OpenPose et ses modèles :
-
-```powershell
-$env:OPENPOSE_HOME = "C:\chemin\vers\openpose"
-py -3.12 .\openpose_bridge\server.py
+```bash
+npm run dev:clean   # redémarrage propre de l'aperçu (efface .next, écoute 0.0.0.0:3000)
+npm run build       # build de production (écrit dans .next-prod, sans casser le dev)
+npm run lint        # ESLint
 ```
 
-Le dossier indiqué doit contenir `models`, `bin`, `x64\Release` et `python\openpose\Release`. Le navigateur affiche l'état « MediaPipe + OpenPose local » lorsque la fusion fonctionne. En l'absence du serveur, MediaPipe reste actif.
+> **Aperçu cassé / page grise** : `next build` et `next dev` n'utilisent plus le
+> même dossier (`distDir` = `.next-prod` pour build/start, `.next` pour dev).
+> En cas de doute, arrêter le serveur puis `npm run dev:clean`. Ne jamais lancer
+> `npm run build` avec un ancien serveur de dev lancé à la main sur `.next`.
 
-OpenPose peut être lent sur CPU. Cette machine dispose d'un GPU Intel UHD 620 (pas de CUDA NVIDIA) ; il faut donc s'attendre à une fréquence d'images réduite côté OpenPose.
+> **Hydratation / boutons inertes** : `src/app/page.tsx` affiche le même écran
+> de boot au premier rendu (serveur et client), puis monte `SuitUpAR` après
+> hydratation via un simple garde `mounted`. Aucun `next/dynamic` : un chunk
+> supplémentaire pouvait échouer dans l'iframe et laisser l'écran de boot figé,
+> donc tous les boutons sans effet. L'app dépend de `window`, de la webcam et
+> de WebGL : aucun arbre serveur complexe n'est hydraté.
 
-## Structure utile
+## Demande d'autorisation caméra automatique
 
-- `src/app/page.tsx` : page principale
-- `src/app/armorStages.ts` : calibration des étapes (repères, ratio, stratégie d'ancrage)
-- `src/app/components/SuitUpAR.tsx` : webcam, suivi MediaPipe/OpenPose, fusion, séquence et UI
-- `openpose_bridge/server.py` : pont HTTP local vers l'API Python OpenPose (travail de GitHub Copilot)
-- `public/armor/` : sources brutes
-- `public/armor/cutouts/` : découpes transparentes + métadonnées JSON générées depuis les sources
+L'iframe de prévisualisation ne peut pas afficher la fenêtre d'autorisation
+Chrome. Le bouton principal **« 🎥 Autoriser la caméra et démarrer »** ouvre
+donc l'application dans un **onglet de premier niveau** avec `?autocam=1`.
+À ce moment-là l'app appelle `getUserMedia()` toute seule au chargement : le
+navigateur affiche la demande, et après acceptation le scan corporel démarre
+immédiatement. Dans un onglet normal (sans iframe), le même bouton appelle
+directement `getUserMedia()`.
 
-## Assets de costume observés
+Si l'ouverture d'onglet est bloquée, le bandeau propose « Copier le lien » et
+un champ contenant l'URL `?autocam=1` à copier manuellement. Les replis
+« ＋ Utiliser ma photo » et « ▶ Démo sans caméra » restent disponibles.
 
-- `mark86_chest_half.png`, les images de casque et les images de répulseur sont des photos opaques avec leur décor. Elles ont été prétraitées en découpes transparentes dans `public/armor/cutouts/` (masque de segmentation + détourage colorimétrique), ce qui permet enfin de les caler sur la silhouette. `mark86_frame_helmet.png` et `mark86_frame_helmet (1).png` sont des doublons identiques.
-- `kling-v3_b_generer_moi_une_vidi.mp4` est une vidéo portrait de transformation sur fond de pièce ; elle convient mieux à un aperçu plein écran qu'à une pièce d'armure superposée.
-- `Untitled 97_1080p_7.mp4` montre le torse sur fond vert ; c'est le meilleur candidat pour un futur effet chroma key, mais son cadrage ne couvre pas le corps entier.
-- `HDRjxWl.mp4` est un clip cinématique paysage de formation du casque ; il reste un effet de transition, pas une source de suivi corporel.
+> **Pas de caméra ?** Cliquer sur « Démo sans caméra » (ou `D`) : la séquence
+> complète joue sur un mannequin virtuel avec les mêmes calques, vidéos et modèle 3D.
 
-## Notes performance
+### ⚠ Caméra refusée alors qu'elle est autorisée (aperçu Arena / iframe)
 
-- Préchargement des images d'armure pour des transitions instantanées
-- Détection MediaPipe throttlée (~10 fps) et fusion OpenPose optionnelle (~3 fps)
-- Mise à jour de la position via styles DOM (évite des re-renders React à chaque frame)
-- Chargement du modèle de suivi **à la demande** après ouverture caméra
-- Les PNG sources sont volumineux (qualité fournie) : pour de meilleures perfs réseau, envisager des versions WebP/AVIF optimisées tout en conservant la transparence.
+L'aperçu est affiché dans un **iframe** dont l'origine (`…e2b.app`) est différente
+de celle de la page (`arena.ai`). L'autorisation visible dans les réglages du
+navigateur concerne la page parente : Chrome bloque `getUserMedia()` dans
+l'iframe si cette dernière n'a pas `allow="camera"` (Permissions Policy), même
+avec la caméra autorisée ailleurs. Ce n'est pas un bug de l'application et aucun
+en-tête côté serveur ne peut le corriger.
+
+Solutions, dans l'ordre :
+
+1. Cliquer sur **« Ouvrir dans un nouvel onglet ↗ »** (bouton affiché dès que
+   l'iframe est détectée) ou coller l'URL affichée dans un nouvel onglet.
+2. Dans ce nouvel onglet (contexte de premier niveau, HTTPS), autoriser la
+   caméra via l'icône 🎥 / cadenas de la barre d'adresse, puis cliquer
+   **« Ouvrir la caméra »**.
+3. Sinon : **« Copier le lien »**, ou **« ＋ Utiliser ma photo »** pour lancer la
+   séquence sur votre propre image (mode démo), ou le bouton « Démo sans caméra ».
+
+L'écran affiche un diagnostic complet après un échec : nom exact de l'erreur
+DOMException (`NotAllowedError`, `NotReadableError`, `OverconstrainedError`…),
+présence d'iframe, `document.permissionsPolicy.allowsFeature('camera')`,
+état de `navigator.permissions`, nombre de caméras détectées, `isSecureContext`
+et hôte concerné. Les contraintes vidéo sont aussi dégradées automatiquement
+(1280×720/30 fps → `facingMode` → `video: true`) pour les webcams capricieuses.
+
+## Ce qui a été amélioré (v2)
+
+| | v1 | v2 |
+|---|---|---|
+| Suivi corporel | MediaPipe chargé depuis un CDN externe (+ pont OpenPose optionnel) | **MediaPipe Pose embarqué en local** (`public/mediapipe`), aucun réseau externe requis |
+| Images | 4 découpes superposées | **5 découpes** (dont le gant/répulseur ancré sur le poignet), affichage par étape avec fondus |
+| Vidéos | 1 effet `screen` | **3 vidéos** : fond vert incrusté en chroma key WebGL, cinématique de transformation plein écran, effet de formation du casque |
+| Modèle Blender | inutilisé | **`.blend` exporté en GLB** (Suzanne + matériau Nano Tech FX V2), shader de matérialisation nano-tech, réacteur ARC 3D et vitrine 3D sur l'accueil |
+| UI | HUD simple | HUD complet, toggles, raccourcis clavier, capture PNG, plein écran, galerie des assets, écran d'accueil |
+| Robustesse | build cassé (`startEquip` utilisé avant déclaration) | build + lint propres, mode dégradé si le modèle de suivi ne charge pas |
+
+## Déroulé de l'expérience
+
+1. **Ouvrir la caméra** : vue miroir, chargement du moteur MediaPipe local,
+   scan corporel (squelette + cadre HUD).
+2. **Verrouillage** : similarité 2D entre les repères calibrés de chaque découpe et
+   les repères du corps (épaules, hanches, nez). Interpolation à 60 fps.
+3. **Transition cinématique** : `kling-v3_b_generer_moi_une_vidi.mp4` plein écran.
+4. **Assemblage en 5 étapes** :
+   `mark86_chest_half` → `mark86_frame_repulsor` → `mark86_repulsor_closed` →
+   `mark86_frame_helmet` → `armure_terminee`.
+   Pendant l'assemblage : vidéo fond vert `Untitled 97_1080p_7.mp4` détourée en
+   temps réel (chroma key shader), `HDRjxWl.mp4` en blend `screen`, modèle 3D
+   Blender qui se matérialise, réacteur ARC 3D pulsant.
+5. **Équipé** : l'armure suit les mouvements ; capture PNG possible.
+
+Un filet de sécurité déclenche l'équipement automatiquement après ~4 s si le
+suivi corporel n'est pas disponible (placement centré).
+
+## Contrôles
+
+| Touche | Action |
+|---|---|
+| `C` | ouvrir / couper la caméra |
+| `D` | mode démo sans caméra |
+| `E` | équiper maintenant |
+| `R` | rejouer la séquence |
+| `S` | capturer un PNG (webcam + calques + scène 3D) |
+| `H` | afficher / masquer le HUD |
+| `F` | plein écran |
+
+Toggles du HUD : modèle 3D, vidéo nano-tech, FX cinéma, squelette, miroir, HUD.
+
+## Assets utilisés
+
+- `public/armor/cutouts/*.webp` : 5 découpes transparentes + `*.json` de repères
+  anatomiques calibrés (MediaPipe Pose).
+- `public/armor/*.mp4` :
+  - `Untitled 97_1080p_7.mp4` — torse/casque sur fond vert → chroma key WebGL ;
+  - `kling-v3_b_generer_moi_une_vidi.mp4` — transformation cinématique ;
+  - `HDRjxWl.mp4` — formation du casque (blend `screen`).
+- `public/models/nanotech_head.glb` — mesh Suzanne (12 755 sommets) + textures
+  PBR 1K extraites du `.blend`, exporté depuis `The_Nano_Tech_Shader_V2.blend`.
+- `public/models/arc_reactor.glb` — réacteur créé dans Blender.
+- `public/models/nano_panel.jpg` — texture « Sci-Fi Panel 20 » du `.blend`, utilisée
+  par le shader de matérialisation nano-tech.
+- `public/posters/*` — vignettes vidéo + rendu Cycles du shader Blender.
+- `public/mediapipe/*` — runtime MediaPipe Pose (Apache-2.0, package npm
+  `@mediapipe/pose@0.5.1675469404`) : `pose.js`, WASM SIMD/non-SIMD, `binarypb`,
+  modèles TFLite lite/full. Servis en local, pas de CDN.
+
+## Pipeline Blender (reproductible)
+
+Les GLB ne sont pas des fichiers « magiques » : voir `tools/export_blender.py`.
+
+```bash
+# Avec Blender installé :
+blender -b --python iron-man-ar/tools/export_blender.py
+# Avec le module Python bpy (numpy requis) :
+python iron-man-ar/tools/export_blender.py
+```
+
+Le script ouvre le `.blend`, extrait les textures packed (downscalées en 1K),
+recentre/décime le mesh, reconstruit un matériau PBR exportable en glTF et génère
+`nanotech_head.glb`, `arc_reactor.glb` et `nano_panel.jpg`.
+`tools/render_model_poster.py` régénère la vignette du shader avec Cycles.
+
+> Le shader procédural « Nano_tech_V2 » du `.blend` n'est pas directement
+> exportable en glTF : son effet de dissolution est recréé côté navigateur dans
+> `BlenderARLayer.tsx` (`onBeforeCompile` + `discard` + liseré cyan + texture
+> panneau sci-fi issue du fichier Blender).
+
+## Structure
+
+```
+src/app/
+  page.tsx                     page d'accueil -> SuitUpAR
+  layout.tsx, globals.css      mise en page / styles / animations
+  armorStages.ts               étapes + inventaire des assets
+  lib/poseMath.ts              similarité 2D, snapshots, ancrages, chroma fit
+  lib/usePoseTracker.ts        chargement local de MediaPipe Pose
+  components/SuitUpAR.tsx      webcam, séquence, HUD, capture, mode démo
+  components/BlenderARLayer.tsx  scène WebGL : GLB Blender + chroma key + réacteur
+  components/BlenderPreview.tsx  vitrine 3D de l'écran d'accueil
+public/mediapipe|armor|models|posters/
+tools/                         scripts Blender
+openpose_bridge/               pont OpenPose local historique (optionnel, non requis)
+```
+
+## Notes
+
+- Le suivi est calculé ~15 fps et lissé à 60 fps via styles DOM : pas de
+  re-render React par frame.
+- `next/font/google` a été retiré (le build échouait hors ligne) ; polices système.
+- Le pont `openpose_bridge/server.py` reste dans le dépôt mais l'application
+  n'en a plus besoin : MediaPipe local suffit, y compris hors ligne.
