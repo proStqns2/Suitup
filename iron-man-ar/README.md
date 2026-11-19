@@ -28,6 +28,12 @@ npm run lint        # ESLint
 > En cas de doute, arrêter le serveur puis `npm run dev:clean`. Ne jamais lancer
 > `npm run build` avec un ancien serveur de dev lancé à la main sur `.next`.
 
+> **Hydratation** : `src/app/page.tsx` charge `SuitUpAR` via `next/dynamic` avec
+> `ssr: false` et affiche un écran de boot. L'app dépend de `window`, de la
+> webcam et de WebGL : aucun arbre serveur n'est produit, donc un HMR ou un
+> iframe de prévisualisation ne peut plus provoquer de
+> « Hydration failed because the server rendered HTML didn't match the client ».
+
 > **Pas de caméra ?** Cliquer sur « Démo sans caméra » (ou `D`) : la séquence
 > complète joue sur un mannequin virtuel avec les mêmes calques, vidéos et modèle 3D.
 
