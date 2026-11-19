@@ -63,6 +63,8 @@ type CameraDiag = {
   permission: string;
   devices: number;
   url: string;
+  /** URL à ouvrir en onglet de premier niveau, avec demande caméra automatique. */
+  autoCamUrl: string;
   host: string;
 };
 
@@ -73,6 +75,7 @@ const INITIAL_DIAG: CameraDiag = {
   permission: "inconnu",
   devices: 0,
   url: "",
+  autoCamUrl: "",
   host: "",
 };
 
@@ -202,7 +205,30 @@ export default function SuitUpAR() {
   const [captureFlash, setCaptureFlash] = useState(false);
   const [toggles, setToggles] = useState<Toggles>(DEFAULT_TOGGLES);
   const [lastCapture, setLastCapture] = useState<string | null>(null);
-  const [diag, setDiag] = useState<CameraDiag>(INITIAL_DIAG);
+  // Composant 100 % client : on peut lire `window` dès l'initialisation,
+  // sans risque de divergence d'hydratation.
+  const [diag, setDiag] = useState<CameraDiag>(() => {
+    if (typeof window === "undefined") return INITIAL_DIAG;
+    const url = window.location.href;
+    let autoCamUrl = url;
+    let host = window.location.host;
+    try {
+      const parsed = new URL(url);
+      host = parsed.host;
+      parsed.searchParams.set("autocam", "1");
+      autoCamUrl = parsed.toString();
+    } catch {
+      // URL non analyzable : on garde les valeurs brutes.
+    }
+    return {
+      ...INITIAL_DIAG,
+      embedded: window.self !== window.top,
+      secure: window.isSecureContext,
+      url,
+      autoCamUrl,
+      host,
+    };
+  });
   const [lastCameraError, setLastCameraError] = useState<{
     name: string;
     message: string;
@@ -271,8 +297,12 @@ export default function SuitUpAR() {
       devices = -1;
     }
     let host = "";
+    let autoCamUrl = window.location.href;
     try {
-      host = new URL(window.location.href).host;
+      const current = new URL(window.location.href);
+      host = current.host;
+      current.searchParams.set("autocam", "1");
+      autoCamUrl = current.toString();
     } catch {
       host = window.location.host;
     }
@@ -283,6 +313,7 @@ export default function SuitUpAR() {
       permission,
       devices,
       url: window.location.href,
+      autoCamUrl,
       host,
     });
   }, []);
@@ -631,6 +662,28 @@ export default function SuitUpAR() {
       setStatus("Caméra indisponible");
     }
   }, [clearTimers, measure, refreshDiag, setPhaseSafe, startTracker, startTransition]);
+
+  /**
+   * Lien `?autocam=1` (ouvert depuis l'iframe) : l'application est alors dans
+   * un onglet de premier niveau, elle demande elle-même l'autorisation caméra
+   * dès son chargement, ce qui fait apparaître la fenêtre du navigateur.
+   */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.self !== window.top) return;
+    let cleanUrl = "";
+    try {
+      const current = new URL(window.location.href);
+      if (current.searchParams.get("autocam") !== "1") return;
+      current.searchParams.delete("autocam");
+      cleanUrl = current.toString();
+      window.history.replaceState({}, "", cleanUrl);
+    } catch {
+      return;
+    }
+    const id = window.setTimeout(() => void startCamera(), 650);
+    return () => window.clearTimeout(id);
+  }, [startCamera]);
 
   /** Mode vitrine : même séquence, mais sur un mannequin virtuel (sans webcam). */
   const startDemo = useCallback(() => {
@@ -1220,7 +1273,7 @@ export default function SuitUpAR() {
               </div>
               <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-[11px] text-zinc-300">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-300" />
-                Web · Webcam · Temps réel · v2.0
+                Interface prête · Webcam · Temps réel · v2.0
               </div>
             </header>
 
@@ -1257,12 +1310,12 @@ export default function SuitUpAR() {
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <a
-                        href={diag.url || "#"}
+                        href={diag.autoCamUrl || diag.url || "#"}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="rounded-full bg-amber-300 px-4 py-2 text-[11px] font-semibold text-black transition hover:bg-amber-200"
                       >
-                        Ouvrir dans un nouvel onglet ↗
+                        🎥 Autoriser la caméra dans un nouvel onglet ↗
                       </a>
                       <button
                         onClick={copyLink}
@@ -1271,24 +1324,43 @@ export default function SuitUpAR() {
                         {copied ? "Lien copié ✓" : "Copier le lien"}
                       </button>
                     </div>
-                    {diag.url && (
-                      <p className="mt-2 break-all font-mono text-[10px] text-amber-100/55">
-                        {diag.url}
-                      </p>
+                    {diag.autoCamUrl && (
+                      <input
+                        readOnly
+                        value={diag.autoCamUrl}
+                        onFocus={(event) => event.currentTarget.select()}
+                        aria-label="Lien à copier manuellement"
+                        className="mt-2 w-full rounded-lg border border-amber-300/25 bg-black/35 px-2 py-1.5 font-mono text-[10px] text-amber-100/70 outline-none"
+                      />
                     )}
                   </div>
                 )}
 
                 <div className="mt-7 flex flex-wrap items-center gap-3">
-                  <button
-                    onClick={startCamera}
-                    className="group rounded-full bg-cyan-300 px-7 py-3.5 text-sm font-semibold text-black shadow-[0_0_40px_rgba(34,211,238,0.35)] transition hover:bg-cyan-200"
-                  >
-                    ● Ouvrir la caméra
-                    <span className="ml-2 opacity-60 transition group-hover:translate-x-1">
-                      →
-                    </span>
-                  </button>
+                  {diag.embedded ? (
+                    <a
+                      href={diag.autoCamUrl || diag.url || "#"}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={copyLink}
+                      className="group rounded-full bg-cyan-300 px-7 py-3.5 text-sm font-semibold text-black shadow-[0_0_40px_rgba(34,211,238,0.35)] transition hover:bg-cyan-200"
+                    >
+                      🎥 Autoriser la caméra et démarrer
+                      <span className="ml-2 opacity-60 transition group-hover:translate-x-1">
+                        ↗
+                      </span>
+                    </a>
+                  ) : (
+                    <button
+                      onClick={startCamera}
+                      className="group rounded-full bg-cyan-300 px-7 py-3.5 text-sm font-semibold text-black shadow-[0_0_40px_rgba(34,211,238,0.35)] transition hover:bg-cyan-200"
+                    >
+                      🎥 Autoriser la caméra et démarrer
+                      <span className="ml-2 opacity-60 transition group-hover:translate-x-1">
+                        →
+                      </span>
+                    </button>
+                  )}
                   <button
                     onClick={startDemo}
                     className="rounded-full border border-cyan-300/40 bg-cyan-300/10 px-5 py-3.5 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-300/20"
@@ -1312,6 +1384,11 @@ export default function SuitUpAR() {
                     ou <kbd className="rounded border border-white/20 px-1.5 py-0.5">C</kbd> caméra · <kbd className="rounded border border-white/20 px-1.5 py-0.5">D</kbd> démo
                   </span>
                 </div>
+                <p className="mt-3 text-[11px] text-cyan-200/75">
+                  {diag.embedded
+                    ? "Le bouton ouvre l'application dans son propre onglet : c'est là que le navigateur affiche la demande d'autorisation caméra, puis le scan démarre tout seul. Si aucun onglet ne s'ouvre, le lien est copié — colle-le dans un nouvel onglet (ou utilise le champ ci-dessus)."
+                    : "Le navigateur va afficher la demande d'autorisation caméra ; accepte-la, l'armure s'équipe automatiquement."}
+                </p>
 
                 {error && (
                   <div className="mt-4 max-w-xl rounded-xl border border-red-300/35 bg-red-500/10 px-4 py-3 text-xs text-red-100">
@@ -1339,12 +1416,12 @@ export default function SuitUpAR() {
                         ↻ Réessayer
                       </button>
                       <a
-                        href={diag.url || "#"}
+                        href={diag.autoCamUrl || diag.url || "#"}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="rounded-full border border-white/25 bg-white/10 px-4 py-2 text-[11px] font-semibold text-white transition hover:bg-white/20"
                       >
-                        Ouvrir dans un nouvel onglet ↗
+                        🎥 Demander l&apos;autorisation dans un nouvel onglet ↗
                       </a>
                       <button
                         onClick={startDemo}

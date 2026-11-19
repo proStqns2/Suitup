@@ -28,11 +28,26 @@ npm run lint        # ESLint
 > En cas de doute, arrêter le serveur puis `npm run dev:clean`. Ne jamais lancer
 > `npm run build` avec un ancien serveur de dev lancé à la main sur `.next`.
 
-> **Hydratation** : `src/app/page.tsx` charge `SuitUpAR` via `next/dynamic` avec
-> `ssr: false` et affiche un écran de boot. L'app dépend de `window`, de la
-> webcam et de WebGL : aucun arbre serveur n'est produit, donc un HMR ou un
-> iframe de prévisualisation ne peut plus provoquer de
-> « Hydration failed because the server rendered HTML didn't match the client ».
+> **Hydratation / boutons inertes** : `src/app/page.tsx` affiche le même écran
+> de boot au premier rendu (serveur et client), puis monte `SuitUpAR` après
+> hydratation via un simple garde `mounted`. Aucun `next/dynamic` : un chunk
+> supplémentaire pouvait échouer dans l'iframe et laisser l'écran de boot figé,
+> donc tous les boutons sans effet. L'app dépend de `window`, de la webcam et
+> de WebGL : aucun arbre serveur complexe n'est hydraté.
+
+## Demande d'autorisation caméra automatique
+
+L'iframe de prévisualisation ne peut pas afficher la fenêtre d'autorisation
+Chrome. Le bouton principal **« 🎥 Autoriser la caméra et démarrer »** ouvre
+donc l'application dans un **onglet de premier niveau** avec `?autocam=1`.
+À ce moment-là l'app appelle `getUserMedia()` toute seule au chargement : le
+navigateur affiche la demande, et après acceptation le scan corporel démarre
+immédiatement. Dans un onglet normal (sans iframe), le même bouton appelle
+directement `getUserMedia()`.
+
+Si l'ouverture d'onglet est bloquée, le bandeau propose « Copier le lien » et
+un champ contenant l'URL `?autocam=1` à copier manuellement. Les replis
+« ＋ Utiliser ma photo » et « ▶ Démo sans caméra » restent disponibles.
 
 > **Pas de caméra ?** Cliquer sur « Démo sans caméra » (ou `D`) : la séquence
 > complète joue sur un mannequin virtuel avec les mêmes calques, vidéos et modèle 3D.
