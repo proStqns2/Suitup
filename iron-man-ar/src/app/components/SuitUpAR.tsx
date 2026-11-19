@@ -1355,8 +1355,10 @@ export default function SuitUpAR() {
                     </div>
                     <p className="mt-2 text-[10px] leading-relaxed text-red-100/60">
                       Astuce : dans le nouvel onglet, clique sur l&apos;icône 🎥 à
-                      droite de la barre d&apos;adresse → « Autoriser » → reviens
-                      ici ou recharge cet onglet.
+                      droite de la barre d&apos;adresse → « Autoriser ». Si Chrome
+                      a mémorisé un blocage, ouvre{" "}
+                      <span className="font-mono">chrome://settings/content/camera</span>{" "}
+                      et supprime l&apos;entrée bloquée pour {diag.host || "ce site"}.
                     </p>
                   </div>
                 )}
