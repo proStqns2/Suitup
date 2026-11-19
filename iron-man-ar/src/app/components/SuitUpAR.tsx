@@ -5,6 +5,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type ChangeEvent,
   type MutableRefObject,
 } from "react";
 import {
@@ -53,6 +54,71 @@ function formatTime() {
     minute: "2-digit",
     second: "2-digit",
   });
+}
+
+type CameraDiag = {
+  embedded: boolean;
+  secure: boolean;
+  policyCamera: boolean | null;
+  permission: string;
+  devices: number;
+  url: string;
+  host: string;
+};
+
+const INITIAL_DIAG: CameraDiag = {
+  embedded: false,
+  secure: true,
+  policyCamera: null,
+  permission: "inconnu",
+  devices: 0,
+  url: "",
+  host: "",
+};
+
+type PolicyDocument = Document & {
+  permissionsPolicy?: { allowsFeature: (feature: string) => boolean };
+  featurePolicy?: { allowsFeature: (feature: string) => boolean };
+};
+
+/**
+ * Ouvre la webcam avec repli progressif sur des contraintes plus simples :
+ * certaines webcams refusent les contraintes 1280x720/30 fps (OverconstrainedError).
+ */
+async function requestCameraStream(): Promise<MediaStream> {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error("mediaDevices indisponible (contexte non sécurisé ?)");
+  }
+  const attempts: MediaStreamConstraints[] = [
+    {
+      video: {
+        facingMode: "user",
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 30, max: 30 },
+      },
+      audio: false,
+    },
+    { video: { facingMode: "user" }, audio: false },
+    { video: true, audio: false },
+  ];
+  let lastError: unknown;
+  for (const constraints of attempts) {
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (err) {
+      lastError = err;
+      const name = err instanceof DOMException ? err.name : "";
+      if (
+        !["OverconstrainedError", "NotFoundError", "TypeError", "AbortError"].includes(
+          name
+        )
+      ) {
+        throw err;
+      }
+    }
+  }
+  throw lastError;
 }
 
 /** Silhouette virtuelle utilisée par le mode démo (sans webcam). */
@@ -136,6 +202,16 @@ export default function SuitUpAR() {
   const [captureFlash, setCaptureFlash] = useState(false);
   const [toggles, setToggles] = useState<Toggles>(DEFAULT_TOGGLES);
   const [lastCapture, setLastCapture] = useState<string | null>(null);
+  const [diag, setDiag] = useState<CameraDiag>(INITIAL_DIAG);
+  const [lastCameraError, setLastCameraError] = useState<{
+    name: string;
+    message: string;
+  } | null>(null);
+  const [demoImage, setDemoImage] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const demoImageElRef = useRef<HTMLImageElement | null>(null);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const diagRef = useRef<CameraDiag>(INITIAL_DIAG);
 
   const setPhaseSafe = useCallback((next: Phase) => {
     phaseRef.current = next;
@@ -161,6 +237,95 @@ export default function SuitUpAR() {
   useEffect(() => {
     trackerStateRef.current = trackerState;
   }, [trackerState]);
+
+  /** Diagnostic caméra : détecte l'iframe et la politique Permissions Policy. */
+  const refreshDiag = useCallback(async () => {
+    const embedded = window.self !== window.top;
+    const secure = window.isSecureContext;
+    let policyCamera: boolean | null = null;
+    try {
+      const doc = document as PolicyDocument;
+      const policy = doc.permissionsPolicy ?? doc.featurePolicy;
+      if (policy?.allowsFeature) policyCamera = policy.allowsFeature("camera");
+    } catch {
+      policyCamera = null;
+    }
+    let permission = "inconnu";
+    try {
+      if (navigator.permissions?.query) {
+        const result = await navigator.permissions.query({
+          name: "camera" as PermissionName,
+        });
+        permission = result.state;
+      }
+    } catch {
+      permission = "indisponible";
+    }
+    let devices = 0;
+    try {
+      if (navigator.mediaDevices?.enumerateDevices) {
+        const list = await navigator.mediaDevices.enumerateDevices();
+        devices = list.filter((device) => device.kind === "videoinput").length;
+      }
+    } catch {
+      devices = -1;
+    }
+    let host = "";
+    try {
+      host = new URL(window.location.href).host;
+    } catch {
+      host = window.location.host;
+    }
+    setDiag({
+      embedded,
+      secure,
+      policyCamera,
+      permission,
+      devices,
+      url: window.location.href,
+      host,
+    });
+  }, []);
+
+  useEffect(() => {
+    // Diagnostic différé : les API navigateur sont interrogées hors du rendu.
+    const id = window.setTimeout(() => void refreshDiag(), 0);
+    return () => window.clearTimeout(id);
+  }, [refreshDiag]);
+  useEffect(() => {
+    diagRef.current = diag;
+  }, [diag]);
+
+  useEffect(() => {
+    if (!demoImage) {
+      demoImageElRef.current = null;
+      return;
+    }
+    const img = new Image();
+    img.src = demoImage;
+    demoImageElRef.current = img;
+    return () => {
+      URL.revokeObjectURL(demoImage);
+    };
+  }, [demoImage]);
+
+  const copyLink = useCallback(() => {
+    const url = window.location.href;
+    if (!navigator.clipboard?.writeText) return;
+    navigator.clipboard
+      .writeText(url)
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 2600);
+      })
+      .catch(() => setCopied(false));
+  }, []);
+
+  const onPhotoSelected = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setDemoImage(URL.createObjectURL(file));
+  }, []);
 
   // --- Préchargement des calques d'armure ---
   useEffect(() => {
@@ -383,19 +548,9 @@ export default function SuitUpAR() {
   // --- Caméra ---
   const startCamera = useCallback(async () => {
     setError(null);
+    setLastCameraError(null);
     try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error("mediaDevices indisponible");
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 30, max: 30 },
-        },
-        audio: false,
-      });
+      const stream = await requestCameraStream();
       streamRef.current = stream;
       const video = videoRef.current;
       if (video) {
@@ -436,19 +591,46 @@ export default function SuitUpAR() {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
       rafRef.current = requestAnimationFrame((ts) => frameRef.current(ts));
     } catch (err) {
-      const name = err instanceof DOMException ? err.name : "";
-      if (name === "NotAllowedError" || name === "SecurityError") {
-        setError("Accès caméra refusé. Autorise la caméra dans le navigateur puis réessaie.");
-      } else if (name === "NotFoundError" || name === "OverconstrainedError") {
-        setError("Aucune webcam compatible détectée sur cet appareil.");
-      } else {
+      const name = err instanceof DOMException ? err.name : "Erreur";
+      const message = err instanceof Error ? err.message : String(err);
+      setLastCameraError({ name, message });
+      void refreshDiag();
+      const d = diagRef.current;
+      const iframeBlocked =
+        d.embedded &&
+        (d.policyCamera === false ||
+          name === "NotAllowedError" ||
+          name === "SecurityError");
+      if (iframeBlocked) {
         setError(
-          "Impossible d'ouvrir la webcam. Vérifie que le site est bien en HTTPS (ou localhost) et que la caméra est libre."
+          "Caméra bloquée par l'aperçu intégré (iframe). L'autorisation affichée concerne arena.ai, pas l'origine de l'application (" +
+            (d.host || "…e2b.app") +
+            "). Chrome interdit getUserMedia dans ce cadre : ouvre l'application dans son propre onglet, puis autorise la caméra SUR CET ONGLET."
         );
+      } else if (!d.secure || name === "SecurityError") {
+        setError(
+          "Contexte non sécurisé : la webcam exige HTTPS ou localhost. Ouvre l'application via son URL HTTPS dans un nouvel onglet."
+        );
+      } else if (name === "NotAllowedError") {
+        setError(
+          "Autorisation refusée pour ce site. Clique sur l'icône caméra / cadenas dans la barre d'adresse de l'onglet de l'application (" +
+            (d.host || "ce site") +
+            "), passe la caméra sur « Autoriser », puis clique sur Réessayer."
+        );
+      } else if (name === "NotFoundError" || name === "OverconstrainedError") {
+        setError(
+          "Aucune webcam compatible détectée (ou format vidéo refusé). Vérifie que la caméra est branchée et non désactivée."
+        );
+      } else if (name === "NotReadableError" || name === "TrackStartError") {
+        setError(
+          "La caméra est déjà utilisée par une autre application (Zoom, Teams, OBS…). Ferme-la puis clique sur Réessayer."
+        );
+      } else {
+        setError("Impossible d'ouvrir la webcam : " + message);
       }
       setStatus("Caméra indisponible");
     }
-  }, [clearTimers, measure, setPhaseSafe, startTracker, startTransition]);
+  }, [clearTimers, measure, refreshDiag, setPhaseSafe, startTracker, startTransition]);
 
   /** Mode vitrine : même séquence, mais sur un mannequin virtuel (sans webcam). */
   const startDemo = useCallback(() => {
@@ -578,6 +760,13 @@ export default function SuitUpAR() {
       bg.addColorStop(1, "#03060c");
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, w, h);
+      const photo = demoImageElRef.current;
+      if (photo?.complete && photo.naturalWidth) {
+        const k = Math.min(w / photo.naturalWidth, h / photo.naturalHeight);
+        const pw = photo.naturalWidth * k;
+        const ph = photo.naturalHeight * k;
+        ctx.drawImage(photo, (w - pw) / 2, (h - ph) / 2, pw, ph);
+      }
     }
 
     // Calque d'armure actif.
@@ -725,11 +914,19 @@ export default function SuitUpAR() {
           <div className="absolute inset-0 z-0 overflow-hidden bg-[#03060c]">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={ASSETS.transformationPoster}
+              src={demoImage ?? ASSETS.transformationPoster}
               alt=""
-              className="h-full w-full object-cover object-center opacity-[0.18]"
+              className={`h-full w-full object-center ${
+                demoImage
+                  ? "object-contain opacity-90"
+                  : "object-cover opacity-[0.18]"
+              }`}
             />
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_45%,rgba(34,211,238,0.14),rgba(3,6,12,0.92)_68%)]" />
+            <div
+              className={`absolute inset-0 bg-[radial-gradient(circle_at_50%_45%,rgba(34,211,238,0.14),rgba(3,6,12,0.92)_68%)] ${
+                demoImage ? "opacity-30" : ""
+              }`}
+            />
             <div className="absolute inset-0 opacity-20 [background:linear-gradient(rgba(0,255,255,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(0,255,255,0.08)_1px,transparent_1px)] [background-size:52px_52px]" />
           </div>
         )}
@@ -1045,6 +1242,43 @@ export default function SuitUpAR() {
                   silhouette, en direct à l&apos;écran.
                 </p>
 
+                {diag.embedded && (
+                  <div className="mt-6 max-w-xl rounded-xl border border-amber-300/40 bg-amber-300/[0.08] px-4 py-3 text-xs text-amber-100">
+                    <p className="font-semibold">
+                      ⚠ Aperçu intégré : la webcam peut être bloquée ici
+                    </p>
+                    <p className="mt-1 leading-relaxed text-amber-100/80">
+                      L&apos;application est affichée dans un iframe d&apos;une autre
+                      origine ({diag.host || "…e2b.app"}). Même avec la caméra
+                      autorisée sur arena.ai, Chrome refuse{" "}
+                      <span className="font-mono">getUserMedia</span> dans ce cadre.
+                      Ouvre l&apos;application dans son propre onglet pour utiliser
+                      la webcam.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <a
+                        href={diag.url || "#"}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded-full bg-amber-300 px-4 py-2 text-[11px] font-semibold text-black transition hover:bg-amber-200"
+                      >
+                        Ouvrir dans un nouvel onglet ↗
+                      </a>
+                      <button
+                        onClick={copyLink}
+                        className="rounded-full border border-amber-300/40 px-4 py-2 text-[11px] font-semibold text-amber-100 transition hover:bg-amber-300/10"
+                      >
+                        {copied ? "Lien copié ✓" : "Copier le lien"}
+                      </button>
+                    </div>
+                    {diag.url && (
+                      <p className="mt-2 break-all font-mono text-[10px] text-amber-100/55">
+                        {diag.url}
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 <div className="mt-7 flex flex-wrap items-center gap-3">
                   <button
                     onClick={startCamera}
@@ -1061,14 +1295,70 @@ export default function SuitUpAR() {
                   >
                     ▶ Démo sans caméra
                   </button>
+                  <button
+                    onClick={() => photoInputRef.current?.click()}
+                    className="rounded-full border border-white/20 bg-white/5 px-4 py-3.5 text-xs font-semibold text-zinc-200 transition hover:bg-white/10"
+                  >
+                    {demoImage ? "✓ Photo chargée (changer)" : "＋ Utiliser ma photo"}
+                  </button>
+                  <input
+                    ref={photoInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={onPhotoSelected}
+                  />
                   <span className="text-xs text-zinc-400">
                     ou <kbd className="rounded border border-white/20 px-1.5 py-0.5">C</kbd> caméra · <kbd className="rounded border border-white/20 px-1.5 py-0.5">D</kbd> démo
                   </span>
                 </div>
+
                 {error && (
-                  <p className="mt-4 max-w-lg rounded-lg border border-red-300/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
-                    {error}
-                  </p>
+                  <div className="mt-4 max-w-xl rounded-xl border border-red-300/35 bg-red-500/10 px-4 py-3 text-xs text-red-100">
+                    <p className="font-semibold">Caméra non activée</p>
+                    <p className="mt-1 leading-relaxed text-red-100/85">{error}</p>
+                    {lastCameraError && (
+                      <p className="mt-2 rounded-lg bg-black/35 px-2 py-1.5 font-mono text-[10px] leading-relaxed text-red-200/80">
+                        {lastCameraError.name} · {lastCameraError.message}
+                        <br />
+                        iframe: {diag.embedded ? "oui" : "non"} · politique caméra:{" "}
+                        {diag.policyCamera === false
+                          ? "BLOQUÉE"
+                          : diag.policyCamera === true
+                          ? "autorisée"
+                          : "inconnue"}{" "}
+                        · permission: {diag.permission} · caméras: {diag.devices} ·
+                        HTTPS: {diag.secure ? "oui" : "non"} · hôte: {diag.host}
+                      </p>
+                    )}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        onClick={startCamera}
+                        className="rounded-full bg-red-200 px-4 py-2 text-[11px] font-semibold text-black transition hover:bg-red-100"
+                      >
+                        ↻ Réessayer
+                      </button>
+                      <a
+                        href={diag.url || "#"}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded-full border border-white/25 bg-white/10 px-4 py-2 text-[11px] font-semibold text-white transition hover:bg-white/20"
+                      >
+                        Ouvrir dans un nouvel onglet ↗
+                      </a>
+                      <button
+                        onClick={startDemo}
+                        className="rounded-full border border-white/25 bg-white/10 px-4 py-2 text-[11px] font-semibold text-white transition hover:bg-white/20"
+                      >
+                        ▶ Mode démo
+                      </button>
+                    </div>
+                    <p className="mt-2 text-[10px] leading-relaxed text-red-100/60">
+                      Astuce : dans le nouvel onglet, clique sur l&apos;icône 🎥 à
+                      droite de la barre d&apos;adresse → « Autoriser » → reviens
+                      ici ou recharge cet onglet.
+                    </p>
+                  </div>
                 )}
 
                 <div className="mt-9 grid max-w-xl grid-cols-3 gap-3">

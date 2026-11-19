@@ -25,6 +25,32 @@ npm run lint    # ESLint
 > **Pas de caméra ?** Cliquer sur « Démo sans caméra » (ou `D`) : la séquence
 > complète joue sur un mannequin virtuel avec les mêmes calques, vidéos et modèle 3D.
 
+### ⚠ Caméra refusée alors qu'elle est autorisée (aperçu Arena / iframe)
+
+L'aperçu est affiché dans un **iframe** dont l'origine (`…e2b.app`) est différente
+de celle de la page (`arena.ai`). L'autorisation visible dans les réglages du
+navigateur concerne la page parente : Chrome bloque `getUserMedia()` dans
+l'iframe si cette dernière n'a pas `allow="camera"` (Permissions Policy), même
+avec la caméra autorisée ailleurs. Ce n'est pas un bug de l'application et aucun
+en-tête côté serveur ne peut le corriger.
+
+Solutions, dans l'ordre :
+
+1. Cliquer sur **« Ouvrir dans un nouvel onglet ↗ »** (bouton affiché dès que
+   l'iframe est détectée) ou coller l'URL affichée dans un nouvel onglet.
+2. Dans ce nouvel onglet (contexte de premier niveau, HTTPS), autoriser la
+   caméra via l'icône 🎥 / cadenas de la barre d'adresse, puis cliquer
+   **« Ouvrir la caméra »**.
+3. Sinon : **« Copier le lien »**, ou **« ＋ Utiliser ma photo »** pour lancer la
+   séquence sur votre propre image (mode démo), ou le bouton « Démo sans caméra ».
+
+L'écran affiche un diagnostic complet après un échec : nom exact de l'erreur
+DOMException (`NotAllowedError`, `NotReadableError`, `OverconstrainedError`…),
+présence d'iframe, `document.permissionsPolicy.allowsFeature('camera')`,
+état de `navigator.permissions`, nombre de caméras détectées, `isSecureContext`
+et hôte concerné. Les contraintes vidéo sont aussi dégradées automatiquement
+(1280×720/30 fps → `facingMode` → `video: true`) pour les webcams capricieuses.
+
 ## Ce qui a été amélioré (v2)
 
 | | v1 | v2 |

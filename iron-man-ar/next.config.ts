@@ -4,7 +4,7 @@ const nextConfig: NextConfig = {
   // Évite le double montage des contextes WebGL en développement.
   reactStrictMode: false,
   // Le site est servi derrière le proxy de prévisualisation Arena.
-  allowedDevOrigins: ["*.e2b.app"],
+  allowedDevOrigins: ["*.e2b.app", "*.arena.site", "*.arena.ai"],
   turbopack: {
     rules: {
       "*.css": {
